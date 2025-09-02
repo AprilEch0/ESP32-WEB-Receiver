@@ -5,12 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>EchoZero • Multi-Device Dashboard</title>
 <style>
-  :root{
-    --bg:#0b0c10; --card:#12151b; --line:#222833; --fg:#e7e9ee; --muted:#98a2b3;
-    --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --accent:#60a5fa;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Inter,Arial,sans-serif}
+  :root{ --bg:#0b0c10; --card:#12151b; --line:#222833; --fg:#e7e9ee; --muted:#98a2b3; --ok:#22c55e; --bad:#ef4444; --accent:#60a5fa; }
+  *{box-sizing:border-box}  body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Inter,Arial,sans-serif}
   .container{max-width:1200px;margin:24px auto;padding:0 16px}
   h1{font-size:clamp(20px,2.8vw,28px);margin:0 0 4px}
   .subhead{display:flex;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:.95rem;margin-bottom:14px}
@@ -20,7 +16,7 @@
   .sections{display:grid;grid-template-columns:1fr;gap:18px}
   .section{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:14px}
   .section h2{font-size:1.05rem;margin:0 0 10px;color:#cbd5e1}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
   .card{border:1px solid var(--line);border-radius:14px;background:#0f131a;padding:12px;display:flex;flex-direction:column;gap:10px}
   .head{display:flex;align-items:center;justify-content:space-between;gap:8px}
   .id{font-weight:700}
@@ -29,20 +25,17 @@
   button:hover{border-color:#2f3947}
   .rows{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .tile{border:1px solid var(--line);border-radius:12px;padding:10px;text-align:center;min-height:86px}
-  .k{color:var(--muted);font-size:.9rem}
-  .v{font-weight:800;font-size:clamp(18px,2.6vw,22px);margin-top:4px;word-break:break-word}
+  .k{color:var(--muted);font-size:.9rem} .v{font-weight:800;font-size:clamp(18px,2.6vw,22px);margin-top:4px;word-break:break-word}
   .sub{color:var(--muted);font-size:.8rem;margin-top:2px}
-  .row1{display:flex;gap:10px;align-items:center;justify-content:space-between}
-  .badge{border:1px solid var(--line);padding:2px 10px;border-radius:999px;font-size:.85rem}
-  .badge.on{color:var(--ok)} .badge.off{color:var(--bad)}
   .mini{border:1px dashed var(--line);border-radius:12px;padding:8px}
   canvas{display:block;width:100%;height:58px}
-  .hide{display:none}
+  .badge{border:1px solid var(--line);padding:2px 10px;border-radius:999px;font-size:.85rem}
+  .badge.on{color:var(--ok)} .badge.off{color:var(--bad)}
 </style>
 </head>
 <body>
   <div class="container">
-    <div class="row1">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <h1>EchoZero • Multi-Device Dashboard</h1>
       <div>Bağlantı: <span id="conn" class="pill">Bekleniyor…</span></div>
     </div>
@@ -65,7 +58,7 @@
 
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script>
-    // ======= AYARLAR =======
+    // ===== AYARLAR =====
     const HOST = "wss://test.mosquitto.org:8081/mqtt";
     const ROOT = "echozero";
     const WILDCARD = `${ROOT}/+/sensors`;
@@ -73,70 +66,26 @@
     document.getElementById('broker').textContent = HOST;
     document.getElementById('wild').textContent = WILDCARD;
 
-    // ======= UI yardımcıları =======
+    // ===== Yardımcılar =====
     const pill = (cls,txt)=>{const el=document.getElementById('conn'); el.className='pill '+cls; el.textContent=txt;};
-    const sensorGrid = document.getElementById('sensorGrid');
-    const ledGrid = document.getElementById('ledGrid');
+    const since = ts => { const d=Date.now()-(+ts||0); if(d<2000)return"az önce"; const s=Math.round(d/1000); if(s<60)return s+" sn önce"; const m=Math.round(s/60); if(m<60)return m+" dk önce"; const h=Math.round(m/60); return h+" sa önce"; };
+    const sensorGrid=document.getElementById('sensorGrid'), ledGrid=document.getElementById('ledGrid');
+    const sensors=new Map(), leds=new Map();
 
-    // Her cihaz için iki tip karttan biri oluşturulacak
-    const sensors = new Map();   // id -> {el, spark, data[]}
-    const leds    = new Map();   // id -> {el}
-
-    // Küçük sparkline (sadece CO2)
     function makeSparkline(canvas){
-      const ctx = canvas.getContext('2d');
-      const maxPts = 75; // ~150 sn (2 sn örnek)
-      const data = [];
-      function draw(){
-        const w = canvas.width = canvas.clientWidth;
-        const h = canvas.height = canvas.clientHeight;
-        ctx.clearRect(0,0,w,h);
-        if (data.length<2) return;
-        const xs = data.map((_,i)=> i/(data.length-1)*(w-8)+4);
-        const min = Math.min(...data), max = Math.max(...data);
-        const rng = Math.max(1, max-min);
-        ctx.beginPath();
-        data.forEach((v,i)=>{
-          const x = xs[i];
-          const y = h-4 - ((v-min)/rng)*(h-8);
-          i? ctx.lineTo(x,y): ctx.moveTo(x,y);
-        });
-        ctx.strokeStyle = '#60a5fa';
-        ctx.lineWidth = 1.6;
-        ctx.stroke();
+      const ctx=canvas.getContext('2d'), maxPts=75, data=[];
+      function draw(){ const w=canvas.width=canvas.clientWidth, h=canvas.height=canvas.clientHeight; ctx.clearRect(0,0,w,h);
+        if(data.length<2) return; const xs=data.map((_,i)=> i/(data.length-1)*(w-8)+4);
+        const min=Math.min(...data), max=Math.max(...data), rng=Math.max(1,max-min);
+        ctx.beginPath(); data.forEach((v,i)=>{ const x=xs[i], y=h-4-((v-min)/rng)*(h-8); i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+        ctx.strokeStyle='#60a5fa'; ctx.lineWidth=1.6; ctx.stroke();
       }
-      return {
-        push(v){
-          if (Number.isFinite(v)) { data.push(v); if (data.length>maxPts) data.shift(); draw(); }
-        }
-      }
+      return { push(v){ if(Number.isFinite(v)){ data.push(v); if(data.length>maxPts) data.shift(); draw(); } } };
     }
 
     function createSensorCard(id){
-      const el = document.createElement('div');
-      el.className='card';
-      el.innerHTML = `
-        <div class="head">
-          <div class="id">${id}</div>
-          <div class="badge" title="Komut konusu"><code>${CMD_OF(id)}</code></div>
-        </div>
-        <div class="rows">
-          <div class="tile"><div class="k">CO₂</div><div class="v co2">—</div><div class="sub">ppm</div></div>
-          <div class="tile"><div class="k">TVOC</div><div class="v tvoc">—</div><div class="sub">ppb</div></div>
-          <div class="tile"><div class="k">IP</div><div class="v ip">—</div><div class="sub ts">ts: —</div></div>
-          <div class="tile mini"><div class="k">CO₂ trend (son ~2.5 dk)</div><canvas></canvas></div>
-        </div>
-      `;
-      sensorGrid.appendChild(el);
-      const spark = makeSparkline(el.querySelector('canvas'));
-      sensors.set(id, {el, spark});
-      return el;
-    }
-
-    function createLedCard(id){
-      const el = document.createElement('div');
-      el.className='card';
-      el.innerHTML = `
+      const el=document.createElement('div'); el.className='card';
+      el.innerHTML=`
         <div class="head">
           <div class="id">${id}</div>
           <div class="btns">
@@ -147,66 +96,69 @@
           </div>
         </div>
         <div class="rows">
-          <div class="tile"><div class="k">LED</div><div class="v led">—</div><div class="sub state">state</div></div>
+          <div class="tile"><div class="k">CO₂</div><div class="v co2">—</div><div class="sub">ppm</div></div>
+          <div class="tile"><div class="k">TVOC</div><div class="v tvoc">—</div><div class="sub">ppb</div></div>
+          <div class="tile"><div class="k">LED</div><div class="v led">—</div><div class="sub">state</div></div>
           <div class="tile"><div class="k">IP</div><div class="v ip">—</div><div class="sub ts">ts: —</div></div>
-        </div>
-      `;
-      el.addEventListener('click', e=>{
-        if (e.target.tagName!=='BUTTON') return;
-        const cmd = e.target.getAttribute('data-cmd');
-        client.publish(CMD_OF(id), cmd, {qos:1,retain:false});
-        console.log('CMD →', id, cmd);
-      });
-      ledGrid.appendChild(el);
-      leds.set(id, {el});
+          <div class="tile mini" style="grid-column:1/3"><div class="k">CO₂ trend (son ~2.5 dk)</div><canvas></canvas></div>
+        </div>`;
+      el.addEventListener('click',e=>{ if(e.target.tagName!=='BUTTON')return; const cmd=e.target.getAttribute('data-cmd'); client.publish(CMD_OF(id),cmd,{qos:1,retain:false}); });
+      sensorGrid.appendChild(el);
+      const spark=makeSparkline(el.querySelector('canvas'));
+      sensors.set(id,{el,spark});
       return el;
     }
 
-    // Zaman metni
-    const since = ts => {
-      const d = Date.now() - (+ts || 0);
-      if (d<2000) return "az önce";
-      const s = Math.round(d/1000); if (s<60) return s+" sn önce";
-      const m = Math.round(s/60);   if (m<60) return m+" dk önce";
-      const h = Math.round(m/60);   return h+" sa önce";
-    };
+    function createLedCard(id){
+      const el=document.createElement('div'); el.className='card';
+      el.innerHTML=`
+        <div class="head">
+          <div class="id">${id}</div>
+          <div class="btns">
+            <button data-cmd="LED_ON">LED Aç</button>
+            <button data-cmd="LED_OFF">LED Kapat</button>
+            <button data-cmd="TOGGLE">Toggle</button>
+            <button data-cmd="PING">Ping</button>
+          </div>
+        </div>
+        <div class="rows">
+          <div class="tile"><div class="k">LED</div><div class="v led">—</div><div class="sub">state</div></div>
+          <div class="tile"><div class="k">IP</div><div class="v ip">—</div><div class="sub ts">ts: —</div></div>
+        </div>`;
+      el.addEventListener('click',e=>{ if(e.target.tagName!=='BUTTON')return; const cmd=e.target.getAttribute('data-cmd'); client.publish(CMD_OF(id),cmd,{qos:1,retain:false}); });
+      ledGrid.appendChild(el);
+      leds.set(id,{el});
+      return el;
+    }
 
-    // ======= MQTT =======
-    const client = mqtt.connect(HOST, {clean:true,connectTimeout:8000,clientId:'web-'+Math.random().toString(16).slice(2)});
-    client.on('connect', ()=>{ pill('ok','Bağlandı'); client.subscribe(WILDCARD,{qos:1}); });
-    client.on('reconnect',()=> pill('bad','Yeniden bağlanıyor…'));
-    client.on('error',    ()=> pill('bad','Hata'));
-    client.on('close',    ()=> pill('bad','Kapalı'));
+    // MQTT
+    const client=mqtt.connect(HOST,{clean:true,connectTimeout:8000,clientId:'web-'+Math.random().toString(16).slice(2)});
+    client.on('connect',()=>{ pill('ok','Bağlandı'); client.subscribe(WILDCARD,{qos:1});});
+    client.on('reconnect',()=>pill('bad','Yeniden bağlanıyor…'));
+    client.on('error',()=>pill('bad','Hata'));
+    client.on('close',()=>pill('bad','Kapalı'));
 
-    client.on('message', (topic, payload) => {
-      const m = topic.match(/^echozero\/([^/]+)\/sensors$/);
-      if (!m) return;
-      const id = m[1];
-      let obj;
-      try { obj = JSON.parse(new TextDecoder().decode(payload)); }
-      catch { return; }
+    client.on('message',(topic,payload)=>{
+      const m=topic.match(/^echozero\/([^/]+)\/sensors$/); if(!m) return; const id=m[1];
+      let j; try{ j=JSON.parse(new TextDecoder().decode(payload)); }catch{ return; }
+      const hasSensors=(j.co2!=null)||(j.tvoc!=null);
 
-      // LED-only mi, sensörlü mü ayırt et
-      const hasSensors = (obj.co2!=null) || (obj.tvoc!=null);
-      if (hasSensors){
-        const ref = sensors.get(id) || {el:createSensorCard(id)};
-        const el = ref.el;
-        el.querySelector('.co2').textContent  = (obj.co2!=null) ? Math.round(+obj.co2) : '—';
-        el.querySelector('.tvoc').textContent = (obj.tvoc!=null)? Math.round(+obj.tvoc): '—';
-        el.querySelector('.ip').textContent   = obj.ip || '—';
-        el.querySelector('.ts').textContent   = 'son: ' + since(obj.ts);
-        // sparkline
-        (sensors.get(id).spark).push(Number(obj.co2));
-      } else {
-        const ref = leds.get(id) || {el:createLedCard(id)};
-        const el = ref.el;
-        const ledOn = String(obj.led).toLowerCase()==='on'||obj.led===true||obj.led==='1';
-        el.querySelector('.led').textContent = ledOn ? 'ON' : 'OFF';
-        el.querySelector('.state').textContent = ledOn ? 'açık' : 'kapalı';
-        el.querySelector('.ip').textContent  = obj.ip || '—';
-        el.querySelector('.ts').textContent  = 'son: ' + since(obj.ts);
-        const badge = el.querySelector('.led').parentElement.parentElement.querySelector('.v');
-        // (sadece metin; renk rozet üstte yok, kart genel karanlık)
+      if(hasSensors){
+        const ref=sensors.get(id)||{el:createSensorCard(id)};
+        const el=ref.el;
+        el.querySelector('.co2').textContent  =(j.co2!=null)?Math.round(+j.co2):'—';
+        el.querySelector('.tvoc').textContent =(j.tvoc!=null)?Math.round(+j.tvoc):'—';
+        el.querySelector('.ip').textContent   =j.ip||'—';
+        el.querySelector('.ts').textContent   ='son: '+(j.ts? (function(ts){const d=Date.now()-(+ts||0);const s=Math.round(d/1000);if(s<60)return s+" sn";const m=Math.round(s/60);if(m<60)return m+" dk";return Math.round(m/60)+" sa";})(j.ts):'—');
+        if (j.led!=null) el.querySelector('.led').textContent = (String(j.led).toLowerCase()==='on'||j.led===true||j.led==='1')?'ON':'OFF';
+        (sensors.get(id).spark).push(Number(j.co2));
+      }else{
+        const ref=leds.get(id)||{el:createLedCard(id)};
+        const el=ref.el;
+        const on = String(j.led).toLowerCase()==='on'||j.led===true||j.led==='1';
+        el.querySelector('.led').textContent = on?'ON':'OFF';
+        el.querySelector('.ip').textContent  = j.ip||'—';
+        el.querySelector('.ts').textContent  = 'son: '+since(j.ts);
       }
     });
   </script>
