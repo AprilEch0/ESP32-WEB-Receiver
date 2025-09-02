@@ -3,89 +3,125 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Live Sensors</title>
+  <title>Live Sensors (Multi-Device)</title>
   <style>
-    body{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:560px;margin:24px auto;padding:0 12px}
-    .card{border:1px solid #ddd;border-radius:12px;padding:16px}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
-    .tile{border:1px solid #eee;border-radius:10px;padding:10px;text-align:center}
-    .k{opacity:.7;font-size:.9rem} .v{font-weight:700;font-size:1.4rem}
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:980px;margin:24px auto;padding:0 12px}
+    .header{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
     .pill{display:inline-block;border:1px solid #ccc;border-radius:999px;padding:2px 10px;font-size:.85rem}
-    .ok{color:#1b9e3e} .bad{color:#c0392b}
+    .ok{color:#1b9e3e}.bad{color:#c0392b}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:12px}
+    .card{border:1px solid #ddd;border-radius:12px;padding:12px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .tile{border:1px solid #eee;border-radius:10px;padding:10px;text-align:center}
+    .k{opacity:.7;font-size:.9rem}.v{font-weight:700;font-size:1.2rem}
+    button{padding:6px 10px;border-radius:8px;border:1px solid #ccc;background:#fafafa;cursor:pointer}
     code{background:#f7f7f7;border:1px solid #eee;padding:2px 6px;border-radius:6px}
-    button{padding:8px 12px;border-radius:10px;border:1px solid #ccc;background:#fafafa;cursor:pointer}
   </style>
 </head>
 <body>
-  <h2>Live Sensors</h2>
-  <div class="card">
+  <div class="header">
+    <h2>Live Sensors (Multi-Device)</h2>
     <div>Bağlantı: <span id="conn" class="pill">Bekleniyor…</span></div>
-    <div style="margin-top:6px"><span class="k">Broker:</span> <code id="broker"></code></div>
-    <div><span class="k">Topic (sensör):</span> <code id="topic"></code></div>
-    <div><span class="k">Topic (komut):</span> <code id="topicCmd"></code></div>
-
-    <div class="row">
-      <div class="tile"><div class="k">CO₂</div><div class="v" id="co2">—</div><small>ppm</small></div>
-      <div class="tile"><div class="k">TVOC</div><div class="v" id="tvoc">—</div><small>ppb</small></div>
-      <div class="tile"><div class="k">Sıcaklık</div><div class="v" id="temp">—</div><small>°C</small></div>
-      <div class="tile"><div class="k">Cihaz IP</div><div class="v" id="ip">—</div><small id="ts">ts: —</small></div>
-    </div>
-
-    <div style="margin-top:16px">
-      <button onclick="sendCmd('LED_ON')">LED Aç</button>
-      <button onclick="sendCmd('LED_OFF')">LED Kapat</button>
-      <button onclick="sendCmd('PING')">Ping</button>
-    </div>
   </div>
+  <div><span class="k">Broker:</span> <code id="broker"></code></div>
+  <div><span class="k">Subscribe:</span> <code id="wild"></code></div>
 
-  <!-- MQTT.js -->
+  <div id="devices" class="grid"></div>
+
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script>
-    // ==== AYARLAR (ESP ile bire bir aynı topic!) ====
-    const HOST       = "wss://test.mosquitto.org:8081/mqtt";
-    const SENS_TOPIC = "echozero/esp32-01/sensors";
-    const CMD_TOPIC  = "echozero/esp32-01/cmd";
+    // ==== AYARLAR ====
+    const HOST = "wss://test.mosquitto.org:8081/mqtt";   // web istemcisi için broker (WSS)
+    const ROOT = "echozero";                              // topic kökü
+    const WILDCARD = `${ROOT}/+/sensors`;                 // tüm cihazların sensör/heartbeat konusu
+    const CMD_OF = id => `${ROOT}/${id}/cmd`;             // o cihaza komut
 
-    // UI yardımcıları
-    const $=id=>document.getElementById(id);
-    const set=(id,val)=>$(id).textContent=val;
-    const pill=(cls,txt)=>{const el=$('conn'); el.className='pill '+cls; el.textContent=txt;}
+    document.getElementById('broker').textContent = HOST;
+    document.getElementById('wild').textContent   = WILDCARD;
 
-    // Ekrana yaz
-    set('broker', HOST);
-    set('topic', SENS_TOPIC);
-    set('topicCmd', CMD_TOPIC);
+    const $ = s => document.querySelector(s);
+    const devicesEl = $('#devices');
+    const pill = (cls, txt)=>{ const el = $('#conn'); el.className='pill '+cls; el.textContent=txt; };
 
-    // MQTT bağlan
+    // Cihaz kart havuzu
+    const cards = new Map();
+
+    function ensureCard(deviceId){
+      if (cards.has(deviceId)) return cards.get(deviceId);
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <b>${deviceId}</b>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button data-cmd="PING">Ping</button>
+            <button data-cmd="LED_ON">LED Aç</button>
+            <button data-cmd="LED_OFF">LED Kapat</button>
+            <button data-cmd="TOGGLE">Toggle</button>
+          </div>
+        </div>
+        <small>cmd topic: <code>${CMD_OF(deviceId)}</code></small>
+        <div class="row" style="margin-top:8px">
+          <div class="tile"><div class="k">CO₂</div><div class="v co2">—</div><small>ppm</small></div>
+          <div class="tile"><div class="k">TVOC</div><div class="v tvoc">—</div><small>ppb</small></div>
+          <div class="tile"><div class="k">Sıcaklık</div><div class="v temp">—</div><small>°C</small></div>
+          <div class="tile"><div class="k">IP</div><div class="v ip">—</div><small class="ts">ts: —</small></div>
+          <div class="tile"><div class="k">LED</div><div class="v led">—</div><small>state</small></div>
+          <div class="tile"><div class="k">Son JSON</div><div class="v last">—</div><small>debug</small></div>
+        </div>
+      `;
+      el.addEventListener('click', (e)=>{
+        if (e.target.tagName!=='BUTTON') return;
+        const cmd = e.target.getAttribute('data-cmd');
+        client.publish(CMD_OF(deviceId), cmd, {qos:1,retain:false});
+        console.log('CMD', deviceId, cmd);
+      });
+      devicesEl.appendChild(el);
+      cards.set(deviceId, el);
+      return el;
+    }
+
+    // MQTT bağlantısı
     const client = mqtt.connect(HOST, {
       clean:true,
       connectTimeout:8000,
       clientId:'web-'+Math.random().toString(16).slice(2),
     });
 
-    client.on('connect', ()=>{ pill('ok','Bağlandı'); client.subscribe(SENS_TOPIC,{qos:1}); });
+    client.on('connect', ()=>{
+      pill('ok','Bağlandı');
+      client.subscribe(WILDCARD, {qos:1});
+    });
     client.on('reconnect',()=> pill('bad','Yeniden bağlanıyor…'));
     client.on('error',    ()=> pill('bad','Hata'));
     client.on('close',    ()=> pill('bad','Kapalı'));
 
-    // Sensör mesajları
+    // Mesajları işle
     client.on('message', (topic, payload) => {
-      if (topic !== SENS_TOPIC) return;
+      // topic: echozero/<deviceId>/sensors
+      const m = topic.match(new RegExp(`^${ROOT}\\/([^/]+)\\/sensors$`));
+      if (!m) return;
+      const id = m[1];
+      const card = ensureCard(id);
+
       try{
-        const j = JSON.parse(new TextDecoder().decode(payload));
+        const txt = new TextDecoder().decode(payload);
+        const j = JSON.parse(txt);
+
+        const set = (cls, val)=> card.querySelector('.'+cls).textContent = val;
         if (j.co2  != null) set('co2',  Math.round(+j.co2));
         if (j.tvoc != null) set('tvoc', Math.round(+j.tvoc));
         set('temp', j.temp==null && j.tempC==null ? '—' : Number(j.temp??j.tempC).toFixed(1));
         set('ip',   j.ip || '—');
-        set('ts',   'ts: ' + (j.ts ?? '—'));
+        card.querySelector('.ts').textContent  = 'ts: ' + (j.ts ?? '—');
+
+        // LED durumu varsa yaz
+        if (j.led) set('led', String(j.led));
+
+        // küçük debug: son JSON’un ilk 30 karakteri
+        set('last', txt.length > 30 ? txt.slice(0,30)+'…' : txt);
       }catch(e){ console.log(e); }
     });
-
-    // Komut gönder
-    function sendCmd(cmd){
-      client.publish(CMD_TOPIC, cmd, {qos:1, retain:false});
-      console.log("Komut gonderildi:", cmd);
-    }
   </script>
 </body>
 </html>
