@@ -3,101 +3,159 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Multi ESP32 Dashboard</title>
+  <title>Live Sensors (Multi-Device)</title>
   <style>
-    body{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:1000px;margin:24px auto;padding:0 12px}
-    .pill{display:inline-block;border:1px solid #ccc;border-radius:999px;padding:2px 10px;font-size:.85rem}
-    .ok{color:#1b9e3e}.bad{color:#c0392b}
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:16px}
-    .card{border:1px solid #ddd;border-radius:12px;padding:14px}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
-    .tile{border:1px solid #eee;border-radius:10px;padding:10px;text-align:center}
-    .k{opacity:.7;font-size:.9rem}.v{font-weight:700;font-size:1.2rem}
-    button{padding:6px 10px;margin:2px;border-radius:8px;border:1px solid #ccc;background:#fafafa;cursor:pointer}
+    :root { --fg:#111; --muted:#6b7280; --card:#ffffff; --line:#e5e7eb; --ok:#16a34a; --bad:#dc2626; }
+    @media (prefers-color-scheme: dark) {
+      :root { --fg:#eaeaea; --muted:#9ca3af; --card:#15171c; --line:#2a3038; }
+      body { background:#0b0c10; }
+    }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:1040px;margin:24px auto;padding:0 12px;color:var(--fg)}
+    h2{margin:0 0 8px}
+    .pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:.85rem}
+    .ok{color:var(--ok)} .bad{color:var(--bad)}
+    .meta{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;color:var(--muted)}
+    code{background:rgba(127,127,127,.1);border:1px solid var(--line);padding:2px 6px;border-radius:6px}
+
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+    .head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+    .id{font-weight:700}
+    .btns{display:flex;gap:6px;flex-wrap:wrap}
+    button{padding:6px 10px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
+    button:hover{filter:brightness(1.2)}
+    .rows{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .kpi{border:1px dashed var(--line);border-radius:12px;padding:10px;text-align:center;min-height:86px}
+    .k{color:var(--muted);font-size:.9rem}
+    .v{font-weight:800;font-size:1.35rem;margin-top:4px}
+    .sub{color:var(--muted);font-size:.8rem;margin-top:2px}
+    .footer{display:flex;gap:10px;margin-top:10px;align-items:center;justify-content:space-between}
+    .badge{border:1px solid var(--line);padding:2px 8px;border-radius:999px;font-size:.8rem}
+    .badge.ok{color:var(--ok)} .badge.off{color:var(--bad)}
+    .truncate{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .hide{display:none}
   </style>
 </head>
 <body>
-  <h2>Multi ESP32 Dashboard</h2>
-  <div>Bağlantı: <span id="conn" class="pill">Bekleniyor…</span></div>
-  <div><span class="k">Broker:</span> <code id="broker"></code></div>
-  <div><span class="k">Subscribe:</span> <code id="wild"></code></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <h2>Live Sensors (Multi-Device)</h2>
+    <div>Bağlantı: <span id="conn" class="pill">Bekleniyor…</span></div>
+  </div>
+  <div class="meta">
+    <div>Broker: <code id="broker"></code></div>
+    <div>Subscribe: <code id="wild"></code></div>
+  </div>
 
   <div id="devices" class="grid"></div>
 
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script>
+    // ===== AYARLAR =====
     const HOST = "wss://test.mosquitto.org:8081/mqtt";
     const ROOT = "echozero";
     const WILDCARD = `${ROOT}/+/sensors`;
-    const CMD_OF = id => `${ROOT}/${id}/cmd`;
+    const CMD_OF   = id => `${ROOT}/${id}/cmd`;
 
     document.getElementById('broker').textContent = HOST;
     document.getElementById('wild').textContent   = WILDCARD;
 
+    const pill = (cls,txt)=>{const el=document.getElementById('conn'); el.className='pill '+cls; el.textContent=txt;};
     const devicesEl = document.getElementById('devices');
-    const pill = (cls, txt)=>{ const el=document.getElementById('conn'); el.className='pill '+cls; el.textContent=txt; };
-
     const cards = new Map();
+
+    function since(ts){
+      const d = Date.now() - (Number(ts)||0);
+      if (d<2000) return "az önce";
+      const s = Math.round(d/1000);
+      if (s<60) return s+" sn önce";
+      const m = Math.round(s/60);
+      if (m<60) return m+" dk önce";
+      const h = Math.round(m/60);
+      return h+" sa önce";
+    }
 
     function ensureCard(id){
       if (cards.has(id)) return cards.get(id);
       const el = document.createElement('div');
       el.className = 'card';
       el.innerHTML = `
-        <h3>${id}</h3>
-        <small>cmd topic: <code>${CMD_OF(id)}</code></small>
-        <div class="row">
-          <div class="tile"><div class="k">CO₂</div><div class="v co2">—</div><small>ppm</small></div>
-          <div class="tile"><div class="k">TVOC</div><div class="v tvoc">—</div><small>ppb</small></div>
-          <div class="tile"><div class="k">Temp</div><div class="v temp">—</div><small>°C</small></div>
-          <div class="tile"><div class="k">IP</div><div class="v ip">—</div><small class="ts">ts:—</small></div>
-          <div class="tile"><div class="k">LED</div><div class="v led">—</div><small>state</small></div>
+        <div class="head">
+          <div class="id">${id}</div>
+          <div class="btns">
+            <button data-cmd="PING">Ping</button>
+            <button data-cmd="LED_ON">LED Aç</button>
+            <button data-cmd="LED_OFF">LED Kapat</button>
+            <button data-cmd="TOGGLE">Toggle</button>
+          </div>
         </div>
-        <div style="margin-top:8px">
-          <button data-cmd="LED_ON">LED Aç</button>
-          <button data-cmd="LED_OFF">LED Kapat</button>
-          <button data-cmd="TOGGLE">Toggle</button>
-          <button data-cmd="PING">Ping</button>
+        <div class="sub" style="margin-bottom:6px">cmd topic: <code>${CMD_OF(id)}</code></div>
+
+        <div class="rows">
+          <div class="kpi kpi-co2"><div class="k">CO₂</div><div class="v co2">—</div><div class="sub">ppm</div></div>
+          <div class="kpi kpi-tvoc"><div class="k">TVOC</div><div class="v tvoc">—</div><div class="sub">ppb</div></div>
+          <div class="kpi kpi-temp"><div class="k">Sıcaklık</div><div class="v temp">—</div><div class="sub">°C</div></div>
+          <div class="kpi"><div class="k">IP</div><div class="v ip">—</div><div class="sub ts">ts: —</div></div>
+        </div>
+
+        <div class="footer">
+          <div class="badge led off">LED: bilinmiyor</div>
+          <div class="truncate last">—</div>
         </div>
       `;
       el.addEventListener('click', e=>{
         if (e.target.tagName!=='BUTTON') return;
         const cmd = e.target.getAttribute('data-cmd');
         client.publish(CMD_OF(id), cmd, {qos:1,retain:false});
-        console.log('CMD->',id,cmd);
+        console.log('CMD →', id, cmd);
       });
       devicesEl.appendChild(el);
       cards.set(id, el);
       return el;
     }
 
-    const client = mqtt.connect(HOST, {
-      clean:true,
-      connectTimeout:8000,
-      clientId:'web-'+Math.random().toString(16).slice(2),
-    });
-
+    // MQTT
+    const client = mqtt.connect(HOST, { clean:true, connectTimeout:8000, clientId:'web-'+Math.random().toString(16).slice(2) });
     client.on('connect', ()=>{ pill('ok','Bağlandı'); client.subscribe(WILDCARD,{qos:1}); });
     client.on('reconnect',()=> pill('bad','Yeniden bağlanıyor…'));
     client.on('error',()=> pill('bad','Hata'));
     client.on('close',()=> pill('bad','Kapalı'));
 
-    client.on('message',(topic,payload)=>{
+    client.on('message', (topic, payload) => {
       const m = topic.match(/^echozero\/([^/]+)\/sensors$/);
       if (!m) return;
       const id = m[1];
-      const card = ensureCard(id);
+      const el = ensureCard(id);
 
       try{
-        const j = JSON.parse(new TextDecoder().decode(payload));
-        const set=(cls,val)=>card.querySelector('.'+cls).textContent=val;
-        if (j.co2!=null) set('co2',Math.round(+j.co2));
-        if (j.tvoc!=null) set('tvoc',Math.round(+j.tvoc));
-        set('temp', j.temp??j.tempC??'—');
-        set('ip', j.ip||'—');
-        card.querySelector('.ts').textContent='ts: '+(j.ts??'—');
-        if (j.led) set('led',j.led);
-      }catch(e){console.log(e);}
+        const txt = new TextDecoder().decode(payload);
+        const j = JSON.parse(txt);
+
+        // kısa/kibar yazıcı
+        const set = (sel, val)=> { el.querySelector(sel).textContent = val; };
+
+        // Boş olan kpi’ları gizle / göster
+        const show = (q, visible)=> el.querySelector(q).classList.toggle('hide', !visible);
+
+        if (j.co2 != null) { set('.co2', Math.round(+j.co2)); show('.kpi-co2', true); } else { show('.kpi-co2', false); }
+        if (j.tvoc!= null) { set('.tvoc',Math.round(+j.tvoc)); show('.kpi-tvoc',true); } else { show('.kpi-tvoc',false); }
+        if (j.temp!=null || j.tempC!=null) { set('.temp', Number(j.temp??j.tempC).toFixed(1)); show('.kpi-temp',true); } else { show('.kpi-temp',false); }
+
+        set('.ip', j.ip || '—');
+        el.querySelector('.ts').textContent = 'son: ' + since(j.ts ?? 0);
+
+        // LED rozeti
+        const ledBadge = el.querySelector('.led');
+        if (j.led) {
+          const on = String(j.led).toLowerCase()==='on' || j.led===true || j.led==='1';
+          ledBadge.textContent = 'LED: ' + (on? 'on':'off');
+          ledBadge.classList.toggle('ok', on);
+          ledBadge.classList.toggle('off', !on);
+        }
+
+        // Son JSON (kısalt)
+        el.querySelector('.last').textContent = txt.length>80 ? txt.slice(0,80)+'…' : txt;
+      }catch(e){ console.log(e); }
     });
   </script>
 </body>
