@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Live Sensors</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:24px auto;padding:0 12px}
+    .card{border:1px solid #ddd;border-radius:12px;padding:16px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .tile{border:1px solid #eee;border-radius:10px;padding:10px;text-align:center}
+    .k{opacity:.7;font-size:.9rem} .v{font-weight:700;font-size:1.4rem}
+    .pill{display:inline-block;border:1px solid #ccc;border-radius:999px;padding:2px 10px;font-size:.85rem}
+    .ok{color:#1b9e3e} .bad{color:#c0392b}
+    code{background:#f7f7f7;border:1px solid #eee;padding:2px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <h2>Live Sensors</h2>
+  <div class="card">
+    <div>Bağlantı: <span id="conn" class="pill">Bekleniyor…</span></div>
+    <div style="margin-top:6px"><span class="k">Broker:</span> <code id="broker"></code></div>
+    <div><span class="k">Topic:</span> <code id="topic"></code></div>
+
+    <div class="row">
+      <div class="tile"><div class="k">CO₂</div><div class="v" id="co2">—</div><small>ppm</small></div>
+      <div class="tile"><div class="k">TVOC</div><div class="v" id="tvoc">—</div><small>ppb</small></div>
+      <div class="tile"><div class="k">Sıcaklık</div><div class="v" id="temp">—</div><small>°C</small></div>
+      <div class="tile"><div class="k">Cihaz IP</div><div class="v" id="ip">—</div><small id="ts">ts: —</small></div>
+    </div>
+  </div>
+
+  <!-- Sadece MQTT.js -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script>
+    // ==== AYARLAR (ESP ile bire bir aynı topic!) ====
+    const HOST  = "wss://test.mosquitto.org:8081/mqtt";
+    const TOPIC = "echozero/esp32-01/sensors";
+
+    // UI yardımcıları
+    const $=id=>document.getElementById(id);
+    const set=(id,val)=>$(id).textContent=val;
+    const pill=(cls,txt)=>{const el=$('conn'); el.className='pill '+cls; el.textContent=txt;}
+
+    // Ekrana yaz
+    set('broker', HOST);
+    set('topic', TOPIC);
+
+    // MQTT bağlan
+    const client = mqtt.connect(HOST, {
+      clean:true,
+      connectTimeout:8000,
+      clientId:'web-'+Math.random().toString(16).slice(2),
+    });
+
+    client.on('connect', ()=>{ pill('ok','Bağlandı'); client.subscribe(TOPIC,{qos:1}); });
+    client.on('reconnect',()=> pill('bad','Yeniden bağlanıyor…'));
+    client.on('error',    ()=> pill('bad','Hata'));
+    client.on('close',    ()=> pill('bad','Kapalı'));
+
+    // Mesajları işle
+    client.on('message', (topic, payload) => {
+      try{
+        const j = JSON.parse(new TextDecoder().decode(payload));
+        if (j.co2  != null) set('co2',  Math.round(+j.co2));
+        if (j.tvoc != null) set('tvoc', Math.round(+j.tvoc));
+        set('temp', j.temp==null && j.tempC==null ? '—' : Number(j.temp??j.tempC).toFixed(1));
+        set('ip',   j.ip || '—');
+        set('ts',   'ts: ' + (j.ts ?? '—'));
+      }catch(e){ console.log(e); }
+    });
+  </script>
+</body>
+</html>
